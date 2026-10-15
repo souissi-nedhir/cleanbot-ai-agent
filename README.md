@@ -1,7 +1,7 @@
 # CleanBot: AI Data Cleaning Agent
 
 An AI-powered data cleaning agent that profiles messy CSVs, detects data quality issues, suggests cleaning options, and produces a cleaned file with a full audit log.
-
+👉 [Try CleanBot here](https://cleanbot-bi.streamlit.app/)
 ## Features
 
 - Profiles messy CSV and Excel data.
