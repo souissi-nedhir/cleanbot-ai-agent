@@ -1,0 +1,10 @@
+.env
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.py[cod]
+.DS_Store
+sample_data/messy_sales_cleaned.csv
+sample_data/change_log.json
+sample_data/debug_raw_response.txt

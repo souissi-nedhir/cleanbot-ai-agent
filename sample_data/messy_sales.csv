@@ -1,0 +1,21 @@
+order_id,date,customer,region,product,quantity,price,notes,country
+1001,2026-01-05,Amina,North,Widget A,3,12.50,First order,Tunisia
+1002,05/01/2026,Bilel,South,Widget B,5,18.00,Urgent,Tunisia
+1003,2026/01/07,Chokri,East,Widget C,2,9.75,No note,Tunisia
+1004,01-08-2026,Dorra,West,Widget A,4,12.50,Gift,Tunisia
+1005,2026-01-09,Emna,North,Widget B,6,18.00,Repeat,Tunisia
+1006,10/01/2026,Fares,South,Widget C,1,9.75,Online,Tunisia
+1007,2026/01/11,Ghada,East,Widget A,7,12.50,Call,Tunisia
+1008,12-01-2026,Hatem,West,Widget B,3,18.00,Delivery,Tunisia
+1009,2026-01-13,Ines,North,Widget C,8,9.75,New,Tunisia
+1010,14/01/2026,Jawhar,South,Widget A,4,12.50,Email,Tunisia
+1011,2026/01/15,Khalil,East,Widget B,2,18.00,Store,Tunisia
+1012,16-01-2026,Lamia,,Widget C,5,9.75,Promo,Tunisia
+1013,2026-01-17,Malek,North,Widget A,6,12.50,Web,Tunisia
+1014,18/01/2026,Nour,South,Widget B,3,18.00,Phone,Tunisia
+1015,2026/01/19,Oussama,,Widget C,9,9.75,Pending,Tunisia
+1016,20-01-2026,Peche,East,Widget A,1000,12.50,Check quantity,Tunisia
+1017,2026-01-21,Rania,West,Widget B,4,,Missing price,Tunisia
+1002,05/01/2026,Bilel,South,Widget B,5,18.00,Urgent,Tunisia
+1005,2026-01-09,Emna,North,Widget B,6,18.00,Repeat,Tunisia
+1010,14/01/2026,Jawhar,South,Widget A,4,12.50,Email,Tunisia
