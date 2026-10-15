@@ -75,20 +75,38 @@ def _apply_operation(
     elif issue_type in {"outliers", "outlier"}:
         if not column or column not in df.columns:
             raise KeyError(f"Outlier column not found: {column!r}")
-        lower, upper = _iqr_bounds(df[column])
         numeric_values = pd.to_numeric(df[column], errors="raise")
+        median = numeric_values.median()
+        if pd.isna(median):
+            raise ValueError(f"Cannot detect outliers in empty column {column!r}.")
+        outlier_mask = numeric_values.notna() & (
+            numeric_values.abs() > abs(median) * 5
+        )
         if option == "Remove outliers (IQR)":
-            keep = numeric_values.between(lower, upper) | numeric_values.isna()
+            keep = ~outlier_mask
             return df.loc[keep], (
-                f"Removed values outside the IQR bounds [{lower}, {upper}]."
+                f"Removed values more than 5 times the median ({median})."
             )
         if option == "Cap outliers (IQR)":
-            df[column] = numeric_values.clip(lower=lower, upper=upper)
-            return df, f"Capped values to the IQR bounds [{lower}, {upper}]."
+            non_outliers = numeric_values.loc[~outlier_mask].dropna()
+            if non_outliers.empty:
+                raise ValueError(f"Cannot calculate a cap for {column!r}.")
+            percentile_cap = float(numeric_values.dropna().quantile(0.99))
+            maximum_non_outlier = float(non_outliers.max())
+            cap = min(percentile_cap, maximum_non_outlier)
+            df[column] = numeric_values.mask(outlier_mask, cap)
+            return df, (
+                f"Capped values more than 5 times the median ({median}) "
+                f"at {cap}."
+            )
         if option == "Cap at 95th percentile":
-            cap = float(numeric_values.quantile(0.95))
-            df[column] = numeric_values.clip(upper=cap)
-            return df, f"Capped values at the 95th percentile ({cap})."
+            non_outliers = numeric_values.loc[~outlier_mask].dropna()
+            if non_outliers.empty:
+                raise ValueError(f"Cannot calculate a cap for {column!r}.")
+            percentile_cap = float(numeric_values.dropna().quantile(0.99))
+            cap = min(percentile_cap, float(non_outliers.max()))
+            df[column] = numeric_values.mask(outlier_mask, cap)
+            return df, f"Capped outliers at the 99th percentile/non-outlier maximum ({cap})."
         if option == "Keep outliers":
             return df, "No action taken; outliers were kept."
 
@@ -96,11 +114,30 @@ def _apply_operation(
         "mixed_type",
         "mixed_types",
         "mixed_type_column",
+        "mixed_type_columns",
         "inconsistent_format",
     }:
         if not column or column not in df.columns:
             raise KeyError(f"Date column not found: {column!r}")
-        parsed = pd.to_datetime(df[column], errors="coerce", format="mixed")
+        parsed = pd.to_datetime(
+            df[column], dayfirst=True, errors="coerce", format="mixed"
+        )
+        year_first_mask = df[column].astype("string").str.match(
+            r"^\d{4}[-/]\d{1,2}[-/]\d{1,2}$", na=False
+        )
+        if year_first_mask.any():
+            parsed.loc[year_first_mask] = pd.to_datetime(
+                df.loc[year_first_mask, column],
+                dayfirst=False,
+                errors="coerce",
+                format="mixed",
+            )
+        unparseable_count = int(parsed.isna().sum())
+        warning = (
+            f" WARNING: dropped {unparseable_count} unparseable date rows."
+            if unparseable_count
+            else ""
+        )
         if option in {
             "Standardize to ISO 8601",
             "Parse with pandas to_datetime (infer)",
@@ -110,14 +147,17 @@ def _apply_operation(
             "Parse to datetime",
             "Standardize to ISO format",
         }:
+            if unparseable_count:
+                df = df.loc[parsed.notna()].copy()
+                parsed = parsed.loc[parsed.notna()]
             df[column] = parsed.dt.strftime("%Y-%m-%d")
-            return df, "Standardized parseable dates to ISO 8601."
+            return df, f"Standardized dates to ISO 8601.{warning}"
         if option == "Drop rows with unparseable dates":
             return df.loc[parsed.notna()].assign(
                 **{column: parsed.loc[parsed.notna()].dt.strftime("%Y-%m-%d")}
-            ), "Dropped rows with unparseable dates and standardized the rest."
+            ), f"Dropped rows with unparseable dates and standardized the rest.{warning}"
 
-    elif issue_type == "constant_column":
+    elif issue_type in {"constant_column", "constant_columns"}:
         if not column or column not in df.columns:
             raise KeyError(f"Constant column not found: {column!r}")
         if option == "Drop column":
