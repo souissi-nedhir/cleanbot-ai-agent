@@ -7,11 +7,12 @@ from pathlib import Path
 from dotenv import load_dotenv
 from openai import OpenAI
 
+from config import MODELS
+
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 REQUIRED_CONTEXT_FILES = ("SOUL.md", "IDENTITY.md", "USER.md", "DoD.md")
 GROQ_BASE_URL = "https://api.groq.com/openai/v1"
-MODEL_NAME = "openai/gpt-oss-20b"
 REQUIRED_ISSUE_KEYS = (
     "id",
     "issue_type",
@@ -159,6 +160,23 @@ def normalize_issues(raw_issues: list[dict]) -> list[dict]:
     return normalized
 
 
+def _is_model_fallback_error(exc: Exception) -> bool:
+    message = str(exc)
+    lowered = message.lower()
+    return any(
+        marker in lowered
+        for marker in (
+            "429",
+            "rate limit",
+            "400",
+            "404",
+            "notfounderror",
+            "model_not_found",
+            "model_decommissioned",
+        )
+    )
+
+
 def detect_issues(profile: dict) -> list[dict]:
     """Return data quality issues identified from a profiler output."""
     # Load the local placeholder or user-provided Groq API key.
@@ -173,51 +191,61 @@ def detect_issues(profile: dict) -> list[dict]:
     # Build the OpenAI-compatible client pointed at Groq.
     client = OpenAI(api_key=api_key, base_url=GROQ_BASE_URL)
 
-    # Try the request twice when the model returns empty or invalid JSON.
     last_error = "unknown response error"
     last_content = ""
     reduced_profile = slim_profile(profile)
-    for attempt in range(2):
-        # Send the profile as JSON without changing its contents.
-        response = client.chat.completions.create(
-            model=MODEL_NAME,
-            messages=[
-                {"role": "system", "content": _build_system_prompt()},
-                {"role": "user", "content": json.dumps(reduced_profile)},
-            ],
-            temperature=0,
-            response_format={"type": "json_object"},
-            max_tokens=4096,
-        )
-
-        content = response.choices[0].message.content
-        last_content = content or ""
-        print(f"RAW RESPONSE LENGTH: {len(last_content)}")
-
-        if not content:
-            last_error = "the model returned an empty response"
-        else:
-            parsed = extract_json(content)
-            issues = parsed.get("issues") if parsed else None
-            if isinstance(issues, list) and all(
-                isinstance(issue, dict) for issue in issues
-            ):
-                print(f"ISSUES PARSED: {len(issues)}")
-                if _has_complete_issue_fields(issues):
-                    return normalize_issues(issues)
-                last_error = "the parsed issue data was incomplete or truncated"
-            else:
-                print("ISSUES PARSED: 0")
-                last_error = (
-                    "the model returned invalid JSON or no valid 'issues' list"
+    for model_index, model_name in enumerate(MODELS):
+        for attempt in range(2):
+            try:
+                response = client.chat.completions.create(
+                    model=model_name,
+                    messages=[
+                        {"role": "system", "content": _build_system_prompt()},
+                        {"role": "user", "content": json.dumps(reduced_profile)},
+                    ],
+                    temperature=0,
+                    response_format={"type": "json_object"},
+                    max_tokens=4096,
                 )
+            except Exception as exc:
+                if _is_model_fallback_error(exc):
+                    next_model = (
+                        MODELS[model_index + 1]
+                        if model_index + 1 < len(MODELS)
+                        else "no remaining model"
+                    )
+                    print(
+                        f"Model {model_name} hit a limit or is unavailable, "
+                        f"trying {next_model}..."
+                    )
+                    break
+                raise
 
-        DEBUG_RESPONSE_PATH.write_text(last_content, encoding="utf-8")
+            content = response.choices[0].message.content
+            last_content = content or ""
+            print(f"RAW RESPONSE LENGTH: {len(last_content)}")
 
-        if attempt == 0:
-            continue
+            if not content:
+                last_error = "the model returned an empty response"
+            else:
+                parsed = extract_json(content)
+                issues = parsed.get("issues") if parsed else None
+                if isinstance(issues, list) and all(
+                    isinstance(issue, dict) for issue in issues
+                ):
+                    print(f"ISSUES PARSED: {len(issues)}")
+                    if _has_complete_issue_fields(issues):
+                        return normalize_issues(issues)
+                    last_error = "the parsed issue data was incomplete or truncated"
+                else:
+                    print("ISSUES PARSED: 0")
+                    last_error = (
+                        "the model returned invalid JSON or no valid 'issues' list"
+                    )
+
+            DEBUG_RESPONSE_PATH.write_text(last_content, encoding="utf-8")
 
     raise ValueError(
-        "Issue detection failed after 2 attempts: "
+        "Issue detection failed after trying all configured models: "
         f"{last_error}. See the raw response at {DEBUG_RESPONSE_PATH}."
     )

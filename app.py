@@ -3,6 +3,7 @@
 import json
 import io
 import sys
+from pathlib import Path
 
 import pandas as pd
 import streamlit as st
@@ -31,14 +32,14 @@ st.subheader("Upload a messy CSV. Get a clean file and a full audit log.")
 def reset_workflow() -> None:
     """Clear all cached workflow data when a different file is uploaded."""
     for key in (
-        "file_signature",
-        "original_df",
+        "df",
         "profile",
         "issues",
-        "plans",
+        "cleaning_plans",
+        "approved_plan",
         "cleaned_df",
         "change_log",
-        "validation",
+        "validation_result",
         "choice_values",
     ):
         st.session_state.pop(key, None)
@@ -57,23 +58,22 @@ if uploaded_file is None:
     )
     st.stop()
 
-file_signature = (uploaded_file.name, uploaded_file.size)
-if st.session_state.get("file_signature") != file_signature:
+if st.session_state.get("uploaded_file_name") != uploaded_file.name:
     reset_workflow()
-    st.session_state["file_signature"] = file_signature
+    st.session_state["uploaded_file_name"] = uploaded_file.name
 
 try:
-    if "original_df" not in st.session_state:
+    if "df" not in st.session_state:
         if uploaded_file.name.lower().endswith(".xlsx"):
             dataframe = pd.read_excel(uploaded_file)
         else:
             dataframe = pd.read_csv(uploaded_file)
-        st.session_state["original_df"] = dataframe
+        st.session_state["df"] = dataframe
 except Exception as exc:
     st.error(f"Could not load the uploaded file: {exc}")
     st.stop()
 
-original_df = st.session_state["original_df"]
+original_df = st.session_state["df"]
 
 st.header("Step 2 - Profile")
 if "profile" not in st.session_state:
@@ -97,27 +97,27 @@ with st.expander("View dataset profile", expanded=True):
         pd.DataFrame(
             list(profile["dtypes"].items()), columns=["Column", "Data type"]
         ),
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
     )
 
     st.write("**Missing values**")
     missing_table = pd.DataFrame(profile["missing"]).T.reset_index()
     missing_table.columns = ["Column", "Count", "Percent"]
-    st.dataframe(missing_table, use_container_width=True, hide_index=True)
+    st.dataframe(missing_table, width="stretch", hide_index=True)
 
     if profile["numeric_stats"]:
         st.write("**Numeric statistics**")
         numeric_table = pd.DataFrame(profile["numeric_stats"]).T.reset_index()
         numeric_table = numeric_table.rename(columns={"index": "Column"})
-        st.dataframe(numeric_table, use_container_width=True, hide_index=True)
+        st.dataframe(numeric_table, width="stretch", hide_index=True)
 
     if profile["outliers"]:
         st.write("**Outliers**")
         outlier_table = pd.DataFrame(
             list(profile["outliers"].items()), columns=["Column", "Count"]
         )
-        st.dataframe(outlier_table, use_container_width=True, hide_index=True)
+        st.dataframe(outlier_table, width="stretch", hide_index=True)
 
 st.header("Step 3 - Detect Issues")
 if "issues" not in st.session_state:
@@ -125,7 +125,14 @@ if "issues" not in st.session_state:
         with st.spinner("Analyzing the profile for data quality issues..."):
             st.session_state["issues"] = detect_issues(profile)
     except Exception as exc:
-        st.error(f"Issue detection failed: {exc}")
+        if "429" in str(exc) or "rate limit" in str(exc).lower():
+            st.warning(
+                "CleanBot is currently resting. The AI API limit has been "
+                "reached. Please try again in a few minutes or switch to a "
+                "different model."
+            )
+        else:
+            st.error(f"Issue detection failed: {exc}")
         st.stop()
 issues = st.session_state["issues"]
 
@@ -149,21 +156,30 @@ if issues:
 
     st.dataframe(
         issue_table.style.map(severity_style, subset=["severity"]),
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
     )
 else:
     st.success("No data quality issues were detected.")
 
 st.header("Step 4 - Review Cleaning Options")
-if "plans" not in st.session_state:
+if "cleaning_plans" not in st.session_state:
     try:
         with st.spinner("Preparing cleaning options for review..."):
-            st.session_state["plans"] = suggest_cleaning_options(issues, profile)
+            st.session_state["cleaning_plans"] = suggest_cleaning_options(
+                issues, profile
+            )
     except Exception as exc:
-        st.error(f"Could not prepare cleaning options: {exc}")
+        if "429" in str(exc) or "rate limit" in str(exc).lower():
+            st.warning(
+                "CleanBot is currently resting. The AI API limit has been "
+                "reached. Please try again in a few minutes or switch to a "
+                "different model."
+            )
+        else:
+            st.error(f"Could not prepare cleaning options: {exc}")
         st.stop()
-plans = st.session_state["plans"]
+plans = st.session_state["cleaning_plans"]
 
 if not plans:
     st.info("There are no cleaning options to review.")
@@ -173,9 +189,13 @@ for plan in plans:
     issue_id = plan.get("issue_id")
     options = plan.get("options", [])
     option_names = [option.get("option_name", "") for option in options]
-    if not option_names:
-        st.warning(f"Issue {issue_id} has no usable cleaning options.")
-        continue
+    manual_option = "Keep as is (Do nothing)"
+    option_names = list(
+        dict.fromkeys(
+            [manual_option]
+            + [option_name for option_name in option_names if option_name]
+        )
+    )
 
     issue = next((item for item in issues if item.get("id") == issue_id), {})
     with st.container(border=True):
@@ -206,15 +226,18 @@ if st.button("Apply Cleaning Plan", type="primary", disabled=not plans):
     approved_plan = []
     for plan in plans:
         issue_id = plan.get("issue_id")
+        chosen_option = choice_values.get(
+            issue_id, plan.get("recommended_option")
+        )
+        if chosen_option == "Keep as is (Do nothing)":
+            continue
         approved_plan.append(
             {
                 "issue_id": issue_id,
                 "issue_type": plan.get("issue_type"),
                 "column": plan.get("column"),
                 "recommended_option": plan.get("recommended_option"),
-                "chosen_option": choice_values.get(
-                    issue_id, plan.get("recommended_option")
-                ),
+                "chosen_option": chosen_option,
             }
         )
 
@@ -228,14 +251,15 @@ if st.button("Apply Cleaning Plan", type="primary", disabled=not plans):
             )
         st.session_state["cleaned_df"] = cleaned_df
         st.session_state["change_log"] = change_log
-        st.session_state["validation"] = validation
+        st.session_state["approved_plan"] = approved_plan
+        st.session_state["validation_result"] = validation
         st.success("Approved cleaning operations completed.")
     except Exception as exc:
         st.error(f"Cleaning failed: {exc}")
 
-if "validation" in st.session_state:
+if "validation_result" in st.session_state:
     st.header("Step 6 - Results")
-    validation = st.session_state["validation"]
+    validation = st.session_state["validation_result"]
     if validation["expected_changes_only"]:
         st.success("Validation passed: no unexpected changes were detected.")
     else:
@@ -263,19 +287,21 @@ if "validation" in st.session_state:
         ]
     )
     st.write("**Before / after comparison**")
-    st.dataframe(comparison, use_container_width=True, hide_index=True)
+    st.dataframe(comparison, width="stretch", hide_index=True)
 
     st.write("**Change log**")
     st.dataframe(
         pd.DataFrame(st.session_state["change_log"]),
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
     )
 
     st.download_button(
         "Download cleaned CSV",
         data=cleaned_df.to_csv(index=False).encode("utf-8"),
-        file_name="cleaned_data.csv",
+        file_name=(
+            f"{Path(st.session_state['uploaded_file_name']).stem}_cleaned.csv"
+        ),
         mime="text/csv",
     )
     st.download_button(
@@ -283,6 +309,9 @@ if "validation" in st.session_state:
         data=json.dumps(
             st.session_state["change_log"], indent=2, default=str
         ).encode("utf-8"),
-        file_name="change_log.json",
+        file_name=(
+            f"{Path(st.session_state['uploaded_file_name']).stem}"
+            "_change_log.json"
+        ),
         mime="application/json",
     )

@@ -1,6 +1,7 @@
 """Test approved cleaning execution and validation on the sample CSV."""
 
 import json
+import sys
 from pathlib import Path
 
 import pandas as pd
@@ -11,9 +12,12 @@ from issue_detector import detect_issues
 from profiler import profile_dataframe
 
 
-# Locate the sample CSV relative to this test file.
 project_root = Path(__file__).parent
-sample_path = project_root / "sample_data" / "messy_sales.csv"
+sample_path = (
+    Path(sys.argv[1])
+    if len(sys.argv) > 1
+    else project_root / "sample_data" / "messy_sales.csv"
+)
 
 # Load and profile the original data.
 original_df = pd.read_csv(sample_path)
@@ -38,8 +42,11 @@ cleaned_df, change_log = apply_approved_plan(original_df, approved_plan)
 validation = validate_cleaning(original_df, cleaned_df, change_log)
 
 # Save only the explicitly requested test artifacts.
-cleaned_df.to_csv(project_root / "sample_data" / "messy_sales_cleaned.csv", index=False)
-(project_root / "sample_data" / "change_log.json").write_text(
+output_dir = sample_path.parent
+cleaned_path = output_dir / f"{sample_path.stem}_cleaned.csv"
+change_log_path = output_dir / f"{sample_path.stem}_change_log.json"
+cleaned_df.to_csv(cleaned_path, index=False)
+change_log_path.write_text(
     json.dumps(change_log, indent=2), encoding="utf-8"
 )
 
