@@ -92,7 +92,3 @@ Given a messy CSV, the agent:
 - Validates the cleaning results and detects and reports unexpected row or column changes.
 - Performs any intentional row or column removal only when it is included in the approved cleaning plan.
 - Targets completion within 10 minutes for representative small-to-medium CSV files; this is a performance goal, not a universal guarantee.
-
-## What I Learned
-
-_Add lessons learned, design decisions, and project reflections here._
